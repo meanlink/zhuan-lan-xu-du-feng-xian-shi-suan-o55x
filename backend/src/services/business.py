@@ -46,6 +46,23 @@ def seed_records():
     return rows
 
 
+def validate_records(records):
+    """输入边界校验：返回错误消息或 None。analyze 与换版案的批次校验共用同一口径。"""
+    if len(records) < 40:
+        return "至少需要40条完整样本，以保留独立验证集。"
+    try:
+        x = np.asarray([[float(row[k]) for k in FEATURES] for row in records])
+        renewed = np.asarray([float(row["renewed"]) for row in records])
+    except (KeyError, TypeError, ValueError):
+        return "行为字段与续读标签必须完整且为数值。"
+    if not np.isfinite(x).all() or not np.isin(renewed, [0, 1]).all() or (x < 0).any() or (x[:, 1] > 100).any():
+        return "行为值必须非负且有限，完成率0~100，续读标签只能为0/1。"
+    y = 1 - renewed.astype(int)
+    if np.bincount(y, minlength=2).min() < 8:
+        return "续读与未续读两类各至少8条样本。"
+    return None
+
+
 def analyze(records, params):
     try:
         threshold = float(params.get("threshold", 0.5))
@@ -54,19 +71,12 @@ def analyze(records, params):
         raise ValueError("风险阈值与模型C须为有效数值。") from exc
     if not 0.1 <= threshold <= 0.9 or not 0.01 <= c_value <= 10:
         raise ValueError("风险阈值须为0.1~0.9，模型C须为0.01~10。")
-    if len(records) < 40:
-        raise ValueError("至少需要40条完整样本，以保留独立验证集。")
-    try:
-        x = np.asarray([[float(row[k]) for k in FEATURES] for row in records])
-        renewed = np.asarray([float(row["renewed"]) for row in records])
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError("行为字段与续读标签必须完整且为数值。") from exc
-    if not np.isfinite(x).all() or not np.isin(renewed, [0, 1]).all() or (x < 0).any() or (x[:, 1] > 100).any():
-        raise ValueError("行为值必须非负且有限，完成率0~100，续读标签只能为0/1。")
+    invalid = validate_records(records)
+    if invalid:
+        raise ValueError(invalid)
+    x = np.asarray([[float(row[k]) for k in FEATURES] for row in records])
+    renewed = np.asarray([float(row["renewed"]) for row in records])
     y = 1 - renewed.astype(int)
-    counts = np.bincount(y, minlength=2)
-    if counts.min() < 8:
-        raise ValueError("续读与未续读两类各至少8条样本。")
     indices = np.arange(len(records))
     train, valid = train_test_split(indices, test_size=0.25, stratify=y, random_state=42)
     model = make_pipeline(StandardScaler(), LogisticRegression(C=c_value, max_iter=1000, random_state=42))

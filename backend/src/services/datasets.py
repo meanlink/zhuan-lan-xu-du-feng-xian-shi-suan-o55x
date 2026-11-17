@@ -1,23 +1,26 @@
+import time
 from fastapi import HTTPException
 from sqlalchemy import select
-from src.models import Dataset
-from src.services.business import metadata
+from src.models import Dataset, Quarantine, SupplySpec
+from src.services import specs
 from src.utils.serialization import checksum
-import math, time
 def create(db, data):
     name=data.name.strip()
     if len(name)<2: raise HTTPException(422, '批次名称去除空格后至少需要两个字符')
     if db.scalar(select(Dataset).where(Dataset.name==name)):
         raise HTTPException(409, '该数据批次名已存在，请修改名称')
-    for index,row in enumerate(data.records):
-        for c in metadata()['columns']:
-            value=row.get(c['key'])
-            if value is None or value=='': raise HTTPException(422, f'第 {index+1} 行缺少字段 {c["label"]}')
-            if c['type']=='number':
-                try:
-                    if isinstance(value,bool) or not math.isfinite(float(value)): raise ValueError()
-                    row[c['key']]=float(value)
-                except (TypeError, ValueError, OverflowError): raise HTTPException(422, f'第 {index+1} 行 {c["label"]} 必须为有限数值')
-    d=Dataset(name=name, source=data.source, records=data.records, checksum=checksum(data.records), created_at=time.time())
+    if data.spec_id:
+        spec=db.get(SupplySpec,data.spec_id)
+        if not spec: raise HTTPException(404,'供稿口径不存在')
+    else:
+        spec=specs.active_spec(db)
+        if not spec: raise HTTPException(409,'尚无现行供稿口径，请先在口径页建立版本')
+    accepted,quarantined=specs.normalize_batch(data.records,spec)
+    if not accepted: raise HTTPException(422,'全部记录均被隔离，没有可接入的合格样本')
+    d=Dataset(name=name, source=data.source, records=accepted, checksum=checksum(accepted), created_at=time.time(),
+              spec_id=spec.id, lifecycle='current', raw_records=data.records)
     db.add(d); db.flush()
+    for q in quarantined:
+        db.add(Quarantine(dataset_id=d.id, row_index=q['row_index'], raw=q['raw'], reasons=q['reasons'], created_at=time.time()))
+    db.flush()
     return d

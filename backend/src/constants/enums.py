@@ -8,3 +8,15 @@ class JobStatus(str, Enum):
     running = 'running'
     completed = 'completed'
     failed = 'failed'
+class SpecStatus(str, Enum):
+    active = 'active'
+    superseded = 'superseded'
+class DatasetLifecycle(str, Enum):
+    staging = 'staging'
+    current = 'current'
+    superseded = 'superseded'
+class PlanStatus(str, Enum):
+    pending = 'pending'
+    running = 'running'
+    completed = 'completed'
+    failed = 'failed'
